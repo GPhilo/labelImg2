@@ -1,13 +1,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import
 
-try:
-    from PyQt5.QtGui import *
-    from PyQt5.QtCore import *
-    from PyQt5.QtWidgets import *
-except ImportError:
-    from PyQt4.QtGui import *
-    from PyQt4.QtCore import *
+from PySide6.QtGui import *
+from PySide6.QtCore import *
+from PySide6.QtWidgets import *
 
 #from PyQt4.QtOpenGL import *
 
@@ -23,20 +19,20 @@ CURSOR_GRAB = Qt.OpenHandCursor
 
 
 class Canvas(QWidget):
-    zoomRequest = pyqtSignal(int)
-    scrollRequest = pyqtSignal(int, int)
-    newShape = pyqtSignal(bool)
-    selectionChanged = pyqtSignal(bool)
-    shapeMoved = pyqtSignal()
-    drawingPolygon = pyqtSignal(bool)
+    zoomRequest = Signal(int)
+    scrollRequest = Signal(int, int)
+    newShape = Signal(bool)
+    selectionChanged = Signal(bool)
+    shapeMoved = Signal()
+    drawingPolygon = Signal(bool)
 
-    hideRRect = pyqtSignal(bool)
-    hideNRect = pyqtSignal(bool)
-    status = pyqtSignal(str)
+    hideRRect = Signal(bool)
+    hideNRect = Signal(bool)
+    status = Signal(str)
 
-    cancelDraw = pyqtSignal()
+    cancelDraw = Signal()
 
-    toggleEdit = pyqtSignal(bool)
+    toggleEdit = Signal(bool)
 
     #CREATE, EDIT = list(range(2))
     CREATE = 0
@@ -642,8 +638,7 @@ class Canvas(QWidget):
 
 
 
-        #p.setRenderHint(QPainter.Antialiasing)
-        p.setRenderHint(QPainter.HighQualityAntialiasing)
+        p.setRenderHint(QPainter.Antialiasing)
         if self.scale < 1.0:
             p.setRenderHint(QPainter.SmoothPixmapTransform)
             
@@ -718,7 +713,8 @@ class Canvas(QWidget):
 
     def transformPos(self, point):
         """Convert from widget-logical coordinates to painter-logical coordinates."""
-        return point / self.scale - self.offsetToCenter()
+        return QPointF(point) / self.scale - self.offsetToCenter()
+        
 
     def offsetToCenter(self):
         s = self.scale

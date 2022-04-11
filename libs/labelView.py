@@ -2,13 +2,9 @@
 from __future__ import absolute_import
 
 import sys
-try:
-    from PyQt5.QtGui import *
-    from PyQt5.QtCore import *
-    from PyQt5.QtWidgets import *
-except ImportError:
-    from PyQt4.QtGui import *
-    from PyQt4.QtCore import *
+from PySide6.QtGui import *
+from PySide6.QtCore import *
+from PySide6.QtWidgets import *
 from .ustr import ustr
 
 class HashableQStandardItem(QStandardItem):
@@ -89,7 +85,7 @@ class CEditDelegate(QStyledItemDelegate):
 
 
 class CHeaderView(QHeaderView):
-    clicked = pyqtSignal(int, bool)
+    clicked = Signal(int, bool)
     _x_offset = 3
     _y_offset = 0 # This value is calculated later, based on the height of the paint rect
     _width = 20
@@ -145,8 +141,8 @@ class CHeaderView(QHeaderView):
 
 
 class CLabelView(QTableView):
-    extraEditing = pyqtSignal(QModelIndex, str)
-    toggleEdit = pyqtSignal(bool)
+    extraEditing = Signal(QModelIndex, str)
+    toggleEdit = Signal(bool)
     def __init__(self, labelHist, parent = None):
         super(CLabelView, self).__init__(parent)
         

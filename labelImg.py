@@ -13,22 +13,13 @@ import subprocess
 from functools import partial
 from collections import defaultdict
 
+from mmocr.utils.ocr import MMOCR
+
 from libs.naturalsort import natsort
 
-try:
-    from PyQt5.QtGui import *
-    from PyQt5.QtCore import *
-    from PyQt5.QtWidgets import *
-except ImportError:
-    # needed for py3+qt4
-    # Ref:
-    # http://pyqt.sourceforge.net/Docs/PyQt4/incompatible_apis.html
-    # http://stackoverflow.com/questions/21217399/pyqt4-qtcore-qvariant-object-instead-of-a-string
-    if sys.version_info.major >= 3:
-        import sip
-        sip.setapi('QVariant', 2)
-    from PyQt4.QtGui import *
-    from PyQt4.QtCore import *
+from PySide6.QtGui import *
+from PySide6.QtCore import *
+from PySide6.QtWidgets import *
 
 # Add internal libs
 from libs.constants import *
@@ -51,10 +42,10 @@ __appname__ = 'labelImg2'
 
 def have_qstring():
     '''p3/qt5 get rid of QString wrapper as py3 has native unicode str type'''
-    return not (sys.version_info.major >= 3 or QT_VERSION_STR.startswith('5.'))
+    return False
 
 def util_qt_strlistclass():
-    return QStringList if have_qstring() else list
+    return list
 
 
 class WindowMixin(object):
@@ -1017,7 +1008,7 @@ class MainWindow(QMainWindow, WindowMixin):
                     #self.errorMessage("Image info not matched", "The width or height of annotation file is not matched with that of the image")
                     self.saveFile()
 
-            self.canvas.setFocus(True)
+            self.canvas.setFocus()
             return True
         return False
 
@@ -1370,7 +1361,7 @@ def get_main_app(argv=[]):
 def main():
     '''construct main app and run it'''
     app, _win = get_main_app(sys.argv)
-    return app.exec_()
+    return app.exec()
 
 if __name__ == '__main__':
     sys.exit(main())

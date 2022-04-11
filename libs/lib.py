@@ -4,13 +4,9 @@ from __future__ import absolute_import
 from math import sqrt
 from .ustr import ustr
 import hashlib
-try:
-    from PyQt5.QtGui import *
-    from PyQt5.QtCore import *
-    from PyQt5.QtWidgets import *
-except ImportError:
-    from PyQt4.QtGui import *
-    from PyQt4.QtCore import *
+from PySide6.QtGui import *
+from PySide6.QtCore import *
+from PySide6.QtWidgets import *
 
 
 def newIcon(icon):
@@ -59,7 +55,8 @@ def addActions(widget, actions):
 
 
 def labelValidator():
-    return QRegExpValidator(QRegExp(r'^[^ \t].+'), None)
+    
+    return QRegularExpressionValidator(QRegularExpression(r'^[^ \t].+'), None)
 
 
 class struct(object):
