@@ -1,0 +1,2 @@
+- Integrate MMOCR and run detector on new image (at Ctrl+Space press?)
+- Integrate "Export COCO-Text"
