@@ -72,8 +72,8 @@ class Shape(object):
         self.direction -= theta
         self.direction = self.direction % (2 * math.pi)
         
-        # self.direction is the angle between y axis and the dotline, clockwise
-        #print(self.direction * 180 / math.pi)
+        # self.direction is the angle between y axis and the dotted line drawn in the box, clockwise
+        # print(math.degrees(self.direction))
 
     def rotatePoint(self, p, theta):
         order = p - self.center

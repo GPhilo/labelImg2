@@ -134,20 +134,6 @@ class Canvas(QWidget):
     # reserve function
     def updateLocalScaleMap(self, x, y):
         pass
-        #if self.pixmap is None:
-        #    return
-
-        #rz = 15
-        #x0 = int(x) - rz
-        #x1 = int(x) + rz
-        #y0 = int(y) - rz
-        #y1 = int(y) + rz
-
-        #self.localScalePixmap = self.pixmap.copy(x0, y0, x1 - x0 + 1, y1 - y0 + 1) #self.grab(QRect(x0, y0, x1 - x0 + 1, y1 - y0 + 1))
-        ##self.localScalePixmap.grabWidget(self, pos.x(), pos.y(), 30, 30) # TODO: pyQt4
-        #w = self.localScalePixmap.width()
-        #h = self.localScalePixmap.height()
-        #self.localScalePixmap = self.localScalePixmap.scaled(w * 5, h * 5, Qt.KeepAspectRatio)
 
     def mouseMoveEvent(self, ev):
         """Update line with last point and current coordinates."""
@@ -194,13 +180,6 @@ class Canvas(QWidget):
 
         # Polygon copy moving.
         if Qt.RightButton & ev.buttons():
-            #if self.selectedShapeCopy and self.prevPoint:
-            #    self.overrideCursor(CURSOR_MOVE)
-            #    self.boundedMoveShape(self.selectedShapeCopy, pos)
-            #    self.repaint()
-            #elif self.selectedShape:
-            #    self.selectedShapeCopy = self.selectedShape.copy()
-            #    self.repaint()
             if self.selectedVertex() and self.selectedShape.isRotated:
                 self.boundedRotateShape(pos)
                 self.shapeMoved.emit()
@@ -974,6 +953,13 @@ class Canvas(QWidget):
     def loadShapes(self, shapes):
         self.shapes = list(shapes)
         self.current = None
+        self.repaint()
+    
+    def appendShapes(self, shapes):
+        if self.shapes:
+            self.shapes += shapes
+        else:
+            self.shapes = list(shapes)
         self.repaint()
 
     def setShapeVisible(self, shape, value):

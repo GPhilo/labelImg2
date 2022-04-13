@@ -3,23 +3,23 @@
 from __future__ import absolute_import
 
 import codecs
-import distutils.spawn
 import os
-import platform
-import re
 import sys
-import subprocess
+import math
+import numpy as np
+from cv2 import minAreaRect
 
 from functools import partial
-from collections import defaultdict
 
-from mmocr.utils.ocr import MMOCR
-
-from libs.naturalsort import natsort
+import mmocr.datasets.pipelines # necessary even if unused explicitly
+from mmocr.apis.inference import init_detector, model_inference
+from mmocr.datasets.pipelines.box_utils import _sort_vertex
 
 from PySide6.QtGui import *
 from PySide6.QtCore import *
 from PySide6.QtWidgets import *
+
+from qimage2ndarray import rgb_view
 
 # Add internal libs
 from libs.constants import *
@@ -36,6 +36,7 @@ from libs.ustr import ustr
 from libs.labelView import CLabelView, HashableQStandardItem
 from libs.fileView import CFileView
 
+
 __appname__ = 'labelImg2'
 
 # Utility functions and classes.
@@ -47,6 +48,8 @@ def have_qstring():
 def util_qt_strlistclass():
     return list
 
+def calc_signed_angle(v1, v2):
+    return -math.atan2( v1[0]*v2[1] - v1[1]*v2[0], v1[0]*v2[0] + v1[1]*v2[1] )
 
 class WindowMixin(object):
 
@@ -211,6 +214,8 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.playing = False
 
+        self.det_model = None
+
         # Actions
         action = partial(newAction, self)
         quit = action('&Quit', self.close,
@@ -227,8 +232,10 @@ class MainWindow(QMainWindow, WindowMixin):
 
         openAnnotation = action('&Open Annotation', self.openAnnotationDialog,
                                 'Ctrl+Shift+O', 'open.svg', u'Open Annotation')
+        
+        openDetector = action('Open &Detector', self.openDetectorDialog, None, None, 'Select a text detector model to load')
 
-
+        self.runDetectorOnCurImage = action('Run detector', self.runDetector, 'Ctrl+space', None, 'Run the loaded detector', False, False)
 
         verify = action('&Verify Image', self.verifyImg,
                         'space', 'downloaded.svg', u'Verify Image')
@@ -358,7 +365,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.drawCorner.triggered.connect(self.canvas.setDrawCornerState)
         
         addActions(self.menus.file,
-                   (open, opendir, changeSavedir, openAnnotation, self.menus.recentFiles, save, saveAs, close, resetAll, quit))
+                   (open, opendir, changeSavedir, openAnnotation, openDetector, self.menus.recentFiles, save, saveAs, close, resetAll, quit))
         addActions(self.menus.help, (showInfo,))
         addActions(self.menus.view, (
             self.autoSaving,
@@ -462,7 +469,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.canvas.menus[0].clear()
         addActions(self.canvas.menus[0], menu)
         self.menus.edit.clear()
-        actions = (self.actions.create, self.actions.createSo, self.actions.createRo) 
+        actions = (self.actions.create, self.actions.createSo, self.actions.createRo, self.runDetectorOnCurImage)
         addActions(self.menus.edit, actions + self.actions.editMenu)
 
     def setDirty(self):
@@ -720,55 +727,58 @@ class MainWindow(QMainWindow, WindowMixin):
         del self.ShapeItemDict[shape]
         del self.ItemShapeDict[item0]
 
+    def _gen_shape_from_info(self, shape_info):
+        
+        if len(shape_info) == 5:
+            label, points, line_color, fill_color, difficult = shape_info
+            extra_label = ''
+            isRotated = False
+            direction = 0
+        elif len(shape_info) == 6:
+            label, points, line_color, fill_color, difficult, extra_label = shape_info
+            isRotated = False
+            direction = 0
+        elif len(shape_info) == 7:
+            label, points, line_color, fill_color, difficult, isRotated, direction = shape_info
+            extra_label = ''
+        elif len(shape_info) == 8:
+            label, points, line_color, fill_color, difficult, isRotated, direction, extra_label = shape_info
+        else:
+            pass
+        shape = Shape(label=label)
+        for x, y in points:
+            shape.addPoint(QPointF(x, y))
+        shape.difficult = difficult
+        shape.direction = direction
+        shape.isRotated = isRotated
+        shape.extra_label = extra_label
+        shape.close()
+
+        if line_color:
+            shape.line_color = QColor(*line_color)
+        else:
+            shape.line_color = generateColorByText(label)
+
+        if fill_color:
+            shape.fill_color = QColor(*fill_color)
+        else:
+            shape.fill_color = generateColorByText(label)
+        
+        shape.alwaysShowCorner = self.drawCorner.isChecked()
+
+        if not label in self.labelHist:
+            self.labelHist.append(label)
+            self.labelList.updateLabelList(self.labelHist)
+        self.addLabel(shape)
+        return shape
+
     def loadLabels(self, shapes):
-        s = []
-        for shape_info in shapes:
-            if len(shape_info) == 5:
-                label, points, line_color, fill_color, difficult = shape_info
-                extra_label = ''
-                isRotated = False
-                direction = 0
-            elif len(shape_info) == 6:
-                label, points, line_color, fill_color, difficult, extra_label = shape_info
-                isRotated = False
-                direction = 0
-            elif len(shape_info) == 7:
-                label, points, line_color, fill_color, difficult, isRotated, direction = shape_info
-                extra_label = ''
-            elif len(shape_info) == 8:
-                label, points, line_color, fill_color, difficult, isRotated, direction, extra_label = shape_info
-            else:
-                pass
-            shape = Shape(label=label)
-            for x, y in points:
-                shape.addPoint(QPointF(x, y))
-            shape.difficult = difficult
-            shape.direction = direction
-            shape.isRotated = isRotated
-            shape.extra_label = extra_label
-            shape.close()
-            s.append(shape)
-
-            if line_color:
-                shape.line_color = QColor(*line_color)
-            else:
-                shape.line_color = generateColorByText(label)
-
-            if fill_color:
-                shape.fill_color = QColor(*fill_color)
-            else:
-                shape.fill_color = generateColorByText(label)
-            
-            shape.alwaysShowCorner = self.drawCorner.isChecked()
-
-            if not label in self.labelHist:
-                self.labelHist.append(label)
-                self.labelList.updateLabelList(self.labelHist)
-                
-
-            self.addLabel(shape)
-
+        s = [self._gen_shape_from_info(shape_info) for shape_info in shapes]
         self.canvas.loadShapes(s)
+
+    def appendLabels(self, shapes):
+        s = [self._gen_shape_from_info(shape_info) for shape_info in shapes]
+        self.canvas.appendShapes(s)
 
     def saveLabels(self, annotationFilePath):
         annotationFilePath = ustr(annotationFilePath)
@@ -1132,6 +1142,22 @@ class MainWindow(QMainWindow, WindowMixin):
                 filename = filename[0]
         self.loadPascalXMLByFilename(filename)
 
+    def openDetectorDialog(self, _value=False):
+        path = os.path.dirname(ustr(self.filePath))\
+            if self.filePath else '.'
+        filters = "Open Model Configuration file (%s)" % ' '.join(['*.py'])
+        config_filename, _ = QFileDialog.getOpenFileName(self,'%s - Choose a model config file' % __appname__, path, filters)
+        if not config_filename:
+            # user cancelled
+            return
+        path = os.path.dirname(config_filename)
+        filters = "Open Model Checkpoint file (%s)" % ' '.join(['*.pth'])
+        pth_filename, _ = QFileDialog.getOpenFileName(self,'%s - Choose a model checkpoint' % __appname__, path, filters)
+        if not pth_filename:
+            return
+        self.det_model = init_detector(config=config_filename, checkpoint=pth_filename)
+        self.runDetectorOnCurImage.setEnabled(True)
+
     def openDirDialog(self, _value=False, dirpath=None):
         if not self.mayContinue():
             return
@@ -1194,7 +1220,7 @@ class MainWindow(QMainWindow, WindowMixin):
         if currIndex.row() + 1 >= self.fileModel.rowCount():
             return False
 
-        nextIndex = self.fileModel.index(currIndex.row() + 1)      
+        nextIndex = self.fileModel.index(currIndex.row() + 1)
         self.filesm.setCurrentIndex(nextIndex, QItemSelectionModel.SelectCurrent)
 
         return True
@@ -1325,6 +1351,29 @@ class MainWindow(QMainWindow, WindowMixin):
         paintLabelsOptionChecked = self.paintLabelsOption.isChecked()
         for shape in self.canvas.shapes:
             shape.paintLabel = paintLabelsOptionChecked
+    
+    def runDetector(self):
+        if self.det_model is None:
+            return
+        ret = model_inference(self.det_model, rgb_view(self.image))['boundary_result']
+        # Each returned item is a list with 9 elements (4 corners and score), unless the detector is a 
+        # polygon-type (in which case it's all the points in the polygon, plus the score)
+        # 
+        # We need to generate the boxes for these now. Reuse the loadLabels logic
+        shapes = []
+        for rec in ret:
+            *points, _ = rec
+            pts = np.asarray(points).reshape((-1,2))
+
+            # The Y axis is POSITIVE DOWN for images, but the angle is defined w.r.t. a Y axis pointing UP, so we need to do some transformations:
+            # - Get angle w.r.t. -Y axis
+            # - Return -angle % (2*Pi) <<<<<<<<<<< THE PARENTHESES ARE IMPORTANT!
+
+            pts = _sort_vertex(pts)
+            angle = calc_signed_angle(pts[1]-pts[2], np.asarray([0,-1])) % (2*np.pi)
+            shapes.append(('text', pts, None, None, False, True, angle))
+
+        self.appendLabels(shapes) # This wipes existing annotations. Replace with something that adds onto the existing one instead.
 
 def inverted(color):
     return QColor(*[255 - v for v in color.getRgb()])
