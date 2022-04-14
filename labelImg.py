@@ -61,13 +61,6 @@ class WindowMixin(object):
     def toolbar(self, title, actions=None):
         toolbar = QToolBar(title)
         toolbar.setObjectName(u'%sToolBar' % title)
-        if actions:
-            if isinstance(action, QWidgetAction):
-                return super(ToolBar, self).addAction(action)
-            btn = QToolButton()
-            btn.setDefaultAction(action)
-            btn.setToolButtonStyle(Qt.ToolButtonIconOnly)
-            toolbar.addWidget(btn)
         self.addToolBar(Qt.TopToolBarArea, toolbar)
         return toolbar
 
