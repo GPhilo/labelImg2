@@ -32,6 +32,7 @@ from libs.labelFile import LabelFile, LabelFileError
 from libs.pascal_voc_io import PascalVocReader, XML_EXT
 from libs.ustr import ustr
 from libs.loader_thread import LoaderThread
+from libs.coco_converter import ExporterThread
 
 from libs.labelView import CLabelView, HashableQStandardItem
 from libs.fileView import CFileView
@@ -228,6 +229,8 @@ class MainWindow(QMainWindow, WindowMixin):
         
         openDetector = action('Open &Detector', self.openDetectorDialog, None, None, 'Select a text detector model to load')
 
+        self.exportJson = action('&Export JSON annotations', self.exportJSON, None, None, 'Convert saved annotations to JSON COCO-like format', False, False)
+
         self.runDetectorOnCurImage = action('Run detector', self.runDetector, 'Ctrl+space', None, 'Run the loaded detector', False, False)
 
         verify = action('&Verify Image', self.verifyImg,
@@ -358,7 +361,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.drawCorner.triggered.connect(self.canvas.setDrawCornerState)
         
         addActions(self.menus.file,
-                   (open, opendir, changeSavedir, openAnnotation, openDetector, self.menus.recentFiles, save, saveAs, close, resetAll, quit))
+                   (open, opendir, changeSavedir, openAnnotation, openDetector, self.menus.recentFiles, None, save, saveAs, None, self.exportJson, None, close, resetAll, quit))
         addActions(self.menus.help, (showInfo,))
         addActions(self.menus.view, (
             self.autoSaving,
@@ -1182,6 +1185,7 @@ class MainWindow(QMainWindow, WindowMixin):
                                                      '%s - Open Directory' % __appname__, defaultOpenDirPath,
                                                      QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks))
         self.importDirImages(targetDirPath)
+        self.exportJson.setEnabled(True)
 
     def importDirImages(self, dirpath):
         if not self.mayContinue() or not dirpath:
@@ -1277,7 +1281,7 @@ class MainWindow(QMainWindow, WindowMixin):
         filenameWithoutExtension = os.path.splitext(self.filePath)[0]
         dlg.selectFile(filenameWithoutExtension)
         dlg.setOption(QFileDialog.DontUseNativeDialog, False)
-        if dlg.exec_():
+        if dlg.exec():
             fullFilePath = ustr(dlg.selectedFiles()[0])
             return os.path.splitext(fullFilePath)[0] # Return file path without the extension.
         return ''
@@ -1388,6 +1392,26 @@ class MainWindow(QMainWindow, WindowMixin):
             shapes.append(('text', pts, None, None, False, True, angle))
 
         self.appendLabels(shapes)
+
+    def exportJSON(self):
+        # TODO: Check that we actually have a selected image and annotations folder
+        # Use images root dir and annotations root dir as selected in the UI
+        # Pick a location to write the file (use fileDialog with appropriate defaults)
+        # 
+        
+        caption = '%s - Choose File' % __appname__
+        filters = 'File (*.json)'
+        images_path = self.currentPath()
+        dlg = QFileDialog(self, caption, images_path, filters)
+        dlg.setAcceptMode(QFileDialog.AcceptSave)
+        dlg.selectFile('instances.json')
+        dlg.setOption(QFileDialog.DontUseNativeDialog, False)
+        if not dlg.exec():
+            # user cancelled
+            return
+        selected_out_path = ustr(dlg.selectedFiles()[0])
+        self.exporter_thr = ExporterThread(images_path, self.defaultSaveDir, selected_out_path)
+        self.exporter_thr.run()
 
 def inverted(color):
     return QColor(*[255 - v for v in color.getRgb()])
