@@ -31,6 +31,7 @@ from libs.labelDialog import LabelDialog
 from libs.labelFile import LabelFile, LabelFileError
 from libs.pascal_voc_io import PascalVocReader, XML_EXT
 from libs.ustr import ustr
+from libs.loader_thread import LoaderThread
 
 from libs.labelView import CLabelView, HashableQStandardItem
 from libs.fileView import CFileView
@@ -409,6 +410,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.move(position)
         saveDir = ustr(settings.get(SETTING_SAVE_DIR, None))
         self.lastOpenDir = ustr(settings.get(SETTING_LAST_OPEN_DIR, None))
+        self.lastDetectorDir = ustr(settings.get(SETTING_LAST_DETECTOR_DIR, None))
         if self.defaultSaveDir is None and saveDir is not None and os.path.exists(saveDir):
             self.defaultSaveDir = saveDir
             self.statusBar().showMessage('%s started. Annotation will be saved to %s' %
@@ -1074,6 +1076,11 @@ class MainWindow(QMainWindow, WindowMixin):
         else:
             settings[SETTING_LAST_OPEN_DIR] = ""
 
+        if self.lastDetectorDir and os.path.exists(self.lastDetectorDir):
+            settings[SETTING_LAST_DETECTOR_DIR] = self.lastDetectorDir
+        else:
+            settings[SETTING_LAST_DETECTOR_DIR] = ""
+
         settings[SETTING_AUTO_SAVE] = self.autoSaving.isChecked()
         settings[SETTING_DRAW_CORNER] = self.drawCorner.isChecked()
         settings[SETTING_PAINT_LABEL] = self.paintLabelsOption.isChecked()
@@ -1135,19 +1142,29 @@ class MainWindow(QMainWindow, WindowMixin):
         self.loadPascalXMLByFilename(filename)
 
     def openDetectorDialog(self, _value=False):
-        path = os.path.dirname(ustr(self.filePath))\
-            if self.filePath else '.'
+        delattr(self, 'det_model') # only del if anything was there
+        self.runDetectorOnCurImage.setEnabled(False)
+        if self.lastDetectorDir and os.path.exists(self.lastDetectorDir):
+            defaultOpenDirPath = self.lastDetectorDir
+        else:
+            defaultOpenDirPath = os.path.dirname(self.filePath) if self.filePath else '.'
+
         filters = "Open Model Configuration file (%s)" % ' '.join(['*.py'])
-        config_filename, _ = QFileDialog.getOpenFileName(self,'%s - Choose a model config file' % __appname__, path, filters)
+        config_filename, _ = QFileDialog.getOpenFileName(self,'%s - Choose a model config file' % __appname__, defaultOpenDirPath, filters)
         if not config_filename:
             # user cancelled
             return
-        path = os.path.dirname(config_filename)
+        self.lastDetectorDir = os.path.dirname(config_filename)
         filters = "Open Model Checkpoint file (%s)" % ' '.join(['*.pth'])
-        pth_filename, _ = QFileDialog.getOpenFileName(self,'%s - Choose a model checkpoint' % __appname__, path, filters)
+        pth_filename, _ = QFileDialog.getOpenFileName(self,'%s - Choose a model checkpoint' % __appname__, self.lastDetectorDir, filters)
         if not pth_filename:
             return
-        self.det_model = init_detector(config=config_filename, checkpoint=pth_filename)
+        self._loader_thr = LoaderThread(config_filename, pth_filename)
+        self._loader_thr.model_loaded.connect(self.modelLoaded)
+        self._loader_thr.run()
+    
+    def modelLoaded(self):
+        self.det_model = self._loader_thr.model
         self.runDetectorOnCurImage.setEnabled(True)
 
     def openDirDialog(self, _value=False, dirpath=None):
@@ -1351,7 +1368,7 @@ class MainWindow(QMainWindow, WindowMixin):
         # Each returned item is a list with 9 elements (4 corners and score), unless the detector is a 
         # polygon-type (in which case it's all the points in the polygon, plus the score)
         # 
-        # We need to generate the boxes for these now. Reuse the loadLabels logic
+        # We need to generate the boxes for these now.
         shapes = []
         for rec in ret:
             *points, _ = rec
@@ -1365,7 +1382,7 @@ class MainWindow(QMainWindow, WindowMixin):
             angle = calc_signed_angle(pts[1]-pts[2], np.asarray([0,-1])) % (2*np.pi)
             shapes.append(('text', pts, None, None, False, True, angle))
 
-        self.appendLabels(shapes) # This wipes existing annotations. Replace with something that adds onto the existing one instead.
+        self.appendLabels(shapes)
 
 def inverted(color):
     return QColor(*[255 - v for v in color.getRgb()])
