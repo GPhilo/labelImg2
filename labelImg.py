@@ -1142,7 +1142,8 @@ class MainWindow(QMainWindow, WindowMixin):
         self.loadPascalXMLByFilename(filename)
 
     def openDetectorDialog(self, _value=False):
-        delattr(self, 'det_model') # only del if anything was there
+        if hasattr(self, 'det_model'):
+            delattr(self, 'det_model')
         self.runDetectorOnCurImage.setEnabled(False)
         if self.lastDetectorDir and os.path.exists(self.lastDetectorDir):
             defaultOpenDirPath = self.lastDetectorDir
@@ -1364,7 +1365,11 @@ class MainWindow(QMainWindow, WindowMixin):
     def runDetector(self):
         if self.det_model is None:
             return
-        ret = model_inference(self.det_model, rgb_view(self.image))['boundary_result']
+        if self.image.isGrayscale():
+            _im = self.image.copy().convertToFormat(QImage.Format_RGB32)
+        else:
+            _im = self.image
+        ret = model_inference(self.det_model, rgb_view(_im))['boundary_result']
         # Each returned item is a list with 9 elements (4 corners and score), unless the detector is a 
         # polygon-type (in which case it's all the points in the polygon, plus the score)
         # 
