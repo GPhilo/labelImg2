@@ -7,7 +7,6 @@ import os
 import sys
 import math
 import numpy as np
-from cv2 import minAreaRect
 
 from functools import partial
 
