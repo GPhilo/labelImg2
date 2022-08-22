@@ -18,3 +18,5 @@ cscope*
 .vscode
 *.pkl
 /.vs
+
+sample_data_dw/

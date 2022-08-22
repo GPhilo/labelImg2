@@ -7,12 +7,14 @@ import os
 import sys
 import math
 import numpy as np
+from cv2 import minAreaRect, boxPoints
 
 from functools import partial
 
 import mmocr.datasets.pipelines # necessary even if unused explicitly
-from mmocr.apis.inference import init_detector, model_inference
+from mmocr.apis.inference import model_inference
 from mmocr.datasets.pipelines.box_utils import _sort_vertex
+from mmocr.datasets.pipelines.crop import warp_img
 
 from PySide6.QtGui import *
 from PySide6.QtCore import *
@@ -209,6 +211,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.playing = False
 
         self.det_model = None
+        self.rec_model = None
 
         # Actions
         action = partial(newAction, self)
@@ -228,10 +231,12 @@ class MainWindow(QMainWindow, WindowMixin):
                                 'Ctrl+Shift+O', 'open.svg', u'Open Annotation')
         
         openDetector = action('Open &Detector', self.openDetectorDialog, None, None, 'Select a text detector model to load')
+        openRecognizer = action('Open &Recognizer', self.openRecognizerDialog, None, None, 'Select a text recognizer model to load')
 
         self.exportJson = action('&Export JSON annotations', self.exportJSON, None, None, 'Convert saved annotations to JSON COCO-like format', False, False)
 
         self.runDetectorOnCurImage = action('Run detector', self.runDetector, 'Ctrl+space', None, 'Run the loaded detector', False, False)
+        self.runRecogOnCurImage = action('Run recogizer', self.runRecognizer, 'Ctrl+shift+space', None, 'Run the loaded recognizer', False, False)
 
         verify = action('&Verify Image', self.verifyImg,
                         'space', 'downloaded.svg', u'Verify Image')
@@ -346,7 +351,7 @@ class MainWindow(QMainWindow, WindowMixin):
         # Auto saving : Enable auto saving if pressing next
         self.autoSaving = QAction("Auto Saving", self)
         self.autoSaving.setCheckable(True)
-        self.autoSaving.setChecked(settings.get(SETTING_AUTO_SAVE, False))
+        self.autoSaving.setChecked(settings.get(SETTING_AUTO_SAVE, True))
         
         # Add option to enable/disable labels being painted at the top of bounding boxes
         self.paintLabelsOption = QAction("Paint Labels", self)
@@ -361,7 +366,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.drawCorner.triggered.connect(self.canvas.setDrawCornerState)
         
         addActions(self.menus.file,
-                   (open, opendir, changeSavedir, openAnnotation, openDetector, self.menus.recentFiles, None, save, saveAs, None, self.exportJson, None, close, resetAll, quit))
+                   (open, opendir, changeSavedir, openAnnotation, self.menus.recentFiles, None, openDetector, openRecognizer, None, save, saveAs, None, self.exportJson, None, close, resetAll, quit))
         addActions(self.menus.help, (showInfo,))
         addActions(self.menus.view, (
             self.autoSaving,
@@ -414,6 +419,7 @@ class MainWindow(QMainWindow, WindowMixin):
         saveDir = ustr(settings.get(SETTING_SAVE_DIR, None))
         self.lastOpenDir = ustr(settings.get(SETTING_LAST_OPEN_DIR, None))
         self.lastDetectorDir = ustr(settings.get(SETTING_LAST_DETECTOR_DIR, None))
+        self.lastRecogDir = ustr(settings.get(SETTING_LAST_RECOGNIZER_DIR, None))
         if self.defaultSaveDir is None and saveDir is not None and os.path.exists(saveDir):
             self.defaultSaveDir = saveDir
             self.statusBar().showMessage('%s started. Annotation will be saved to %s' %
@@ -466,7 +472,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.canvas.menus[0].clear()
         addActions(self.canvas.menus[0], menu)
         self.menus.edit.clear()
-        actions = (self.actions.create, self.actions.createSo, self.actions.createRo, self.runDetectorOnCurImage)
+        actions = (self.actions.create, self.actions.createSo, self.actions.createRo, self.runDetectorOnCurImage, self.runRecogOnCurImage)
         addActions(self.menus.edit, actions + self.actions.editMenu)
 
     def setDirty(self):
@@ -1083,6 +1089,11 @@ class MainWindow(QMainWindow, WindowMixin):
             settings[SETTING_LAST_DETECTOR_DIR] = self.lastDetectorDir
         else:
             settings[SETTING_LAST_DETECTOR_DIR] = ""
+        
+        if self.lastRecogDir and os.path.exists(self.lastRecogDir):
+            settings[SETTING_LAST_RECOGNIZER_DIR] = self.lastRecogDir
+        else:
+            settings[SETTING_LAST_RECOGNIZER_DIR] = ""
 
         settings[SETTING_AUTO_SAVE] = self.autoSaving.isChecked()
         settings[SETTING_DRAW_CORNER] = self.drawCorner.isChecked()
@@ -1163,12 +1174,39 @@ class MainWindow(QMainWindow, WindowMixin):
         pth_filename, _ = QFileDialog.getOpenFileName(self,'%s - Choose a model checkpoint' % __appname__, self.lastDetectorDir, filters)
         if not pth_filename:
             return
-        self._loader_thr = LoaderThread(config_filename, pth_filename)
-        self._loader_thr.model_loaded.connect(self.modelLoaded)
-        self._loader_thr.run()
+        self._loader_thr_det = LoaderThread(config_filename, pth_filename)
+        self._loader_thr_det.model_loaded.connect(self.detModelLoaded)
+        self._loader_thr_det.run()
     
-    def modelLoaded(self):
-        self.det_model = self._loader_thr.model
+    def openRecognizerDialog(self, _value=False):
+        if hasattr(self, 'rec_model'):
+            delattr(self, 'rec_model')
+        self.runRecogOnCurImage.setEnabled(False)
+        if self.lastRecogDir and os.path.exists(self.lastRecogDir):
+            defaultOpenDirPath = self.lastRecogDir
+        else:
+            defaultOpenDirPath = os.path.dirname(self.filePath) if self.filePath else '.'
+
+        filters = "Open Model Configuration file (%s)" % ' '.join(['*.py'])
+        config_filename, _ = QFileDialog.getOpenFileName(self,'%s - Choose a model config file' % __appname__, defaultOpenDirPath, filters)
+        if not config_filename:
+            # user cancelled
+            return
+        self.lastRecogDir = os.path.dirname(config_filename)
+        filters = "Open Model Checkpoint file (%s)" % ' '.join(['*.pth'])
+        pth_filename, _ = QFileDialog.getOpenFileName(self,'%s - Choose a model checkpoint' % __appname__, self.lastRecogDir, filters)
+        if not pth_filename:
+            return
+        self._loader_thr_rec = LoaderThread(config_filename, pth_filename)
+        self._loader_thr_rec.model_loaded.connect(self.recModelLoaded)
+        self._loader_thr_rec.run()
+    
+    def recModelLoaded(self):
+        self.rec_model = self._loader_thr_rec.model
+        self.runRecogOnCurImage.setEnabled(True)
+
+    def detModelLoaded(self):
+        self.det_model = self._loader_thr_det.model
         self.runDetectorOnCurImage.setEnabled(True)
 
     def openDirDialog(self, _value=False, dirpath=None):
@@ -1204,7 +1242,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
     def verifyImg(self, _value=False):
         # Proceding next image without dialog if having any label
-         if self.filePath is not None:
+        if self.filePath is not None:
             try:
                 self.labelFile.toggleVerify()
             except AttributeError:
@@ -1382,6 +1420,9 @@ class MainWindow(QMainWindow, WindowMixin):
         for rec in ret:
             *points, _ = rec
             pts = np.asarray(points).reshape((-1,2))
+            if len(pts) > 4:
+                # we got a polygon back, fit a box instead
+                pts = boxPoints(minAreaRect(pts))
 
             # The Y axis is POSITIVE DOWN for images, but the angle is defined w.r.t. a Y axis pointing UP, so we need to do some transformations:
             # - Get angle w.r.t. -Y axis
@@ -1392,6 +1433,32 @@ class MainWindow(QMainWindow, WindowMixin):
             shapes.append(('text', pts, None, None, False, True, angle))
 
         self.appendLabels(shapes)
+        self.setDirty()
+    
+    # TODO: Separate out "run recognizer on the selected box" and "run recognizer on every box in the image"
+    def runRecognizer(self):
+        if self.rec_model is None:
+            return
+        if self.image.isGrayscale():
+            # NOTE: Don't overwrite _im until the end of the function, or the QImage instance will be garbage-collected and
+            #       there will be a silent crash when rgv_view(_im) is still in use.
+            _im = self.image.copy().convertToFormat(QImage.Format_RGB32)
+        else:
+            _im = self.image
+        # Extract warped crops from annotations in the active image
+        polys = [np.asarray([(pt.x(), pt.y()) for pt in shape.points]) for shape in self.canvas.shapes]
+        crops = [warp_img(rgb_view(_im), p.flatten().tolist()) for p in polys]
+        res_list = [model_inference(self.rec_model, c) for c in crops]
+        # sample res_list: [{'text': '3319', 'score': 0.7634111791849136}]
+        # Update the extra info in the boxes
+        EXTRA_INFO_COL_IDX = 1
+        for idx, res in enumerate(res_list):
+            txt = res['text']
+            _idx = self.labelModel.index(idx, EXTRA_INFO_COL_IDX)
+            self.labelModel.setData(_idx, txt)
+            self.labelModel.dataChanged.emit(_idx,_idx)
+        if res_list:
+            self.setDirty()
 
     def exportJSON(self):
         # TODO: Check that we actually have a selected image and annotations folder
